@@ -12,7 +12,7 @@ clicked_time: float = 0
 
 class HandlerAnchor(ClickableObject):
     # Constants
-    RADIUS: Final[int] = 3
+    RADIUS: Final[int] = 5
 
     # Class fields
     _clicked_handler = None
@@ -29,6 +29,7 @@ class HandlerAnchor(ClickableObject):
 
     @classmethod
     def handle_click(cls, x: float, y: float) -> bool:
+        cls._clicked_handler = None
         anc = Anchor.get_focused_anchor()
         if anc is None:
             return False
@@ -62,7 +63,7 @@ class HandlerAnchor(ClickableObject):
         # Un-draw handler
         pen.pd()
         pen.goto(global_x, global_y)
-        pen.dot(HandlerAnchor.RADIUS + 1, "#000000")
+        pen.dot(HandlerAnchor.RADIUS + 3, "#000000")
         pen.dot(HandlerAnchor.RADIUS, "#FFFFFF")
 
         # Reset settings
@@ -84,7 +85,7 @@ class HandlerAnchor(ClickableObject):
         pen.pd()
         pen.pencolor("#FFFFFF")
         pen.goto(global_x, global_y)
-        pen.dot(HandlerAnchor.RADIUS + 1, "#FFFFFF")
+        pen.dot(HandlerAnchor.RADIUS + 3, "#FFFFFF")
 
         # Reset settings
         pen.pu()
@@ -100,16 +101,23 @@ class HandlerAnchor(ClickableObject):
 
     def move(self, x: int, y: int):
         global pen
+        anc_x, anc_y = self._anchor.get_pos()
+
         # Remove handler
         self.un_draw()
 
         # Update position
-        self._x, self._y = x, y
+        self._x, self._y = x - anc_x, y - anc_y
 
         # Draw
         self.draw()
 
+        self._anchor.draw()
         pen.pu()
+
+    @classmethod
+    def get_clicked_handler(cls):
+        return cls._clicked_handler
 
 
 # noinspection PyProtectedMember
@@ -144,7 +152,7 @@ class Anchor(ClickableObject):
         Anchor._anchors.append(self)
         Anchor._focused_anchor = self
 
-        self._draw()
+        self.draw()
 
     @classmethod
     def handle_click(cls, x: float, y: float) -> bool:
@@ -183,7 +191,7 @@ class Anchor(ClickableObject):
         self._highlighted = True
 
         # Draw
-        self._draw()
+        self.draw()
 
     def un_highlight(self):
         global pen
@@ -194,7 +202,7 @@ class Anchor(ClickableObject):
         self._highlighted = False
 
         # Draw
-        self._draw()
+        self.draw()
 
     def move(self, x: int, y: int):
         global pen
@@ -205,7 +213,7 @@ class Anchor(ClickableObject):
         self._x, self._y = x, y
 
         # Draw
-        self._draw()
+        self.draw()
 
         pen.pu()
 
@@ -215,7 +223,7 @@ class Anchor(ClickableObject):
     def get_handlers(self) -> tuple[HandlerAnchor, HandlerAnchor]:
         return self._handler_l, self._handler_r
 
-    def _draw(self):
+    def draw(self):
         global pen
         # Goto the anchor's position
         pen.pu()
@@ -294,7 +302,7 @@ def setup():
 def setup_canvas_event_listeners():
     global canvas
     canvas = t.getcanvas()
-    canvas.bind("<Button-1>", draw_anchor, True)
+    canvas.bind("<Button-1>", main_click_handler, True)
 
 
 def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int):
@@ -314,14 +322,25 @@ def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int
     t.pu()
 
 
-def draw_anchor(event):
+def main_click_handler(event):
     global pen, canvas
     x, y = _get_local_x_y(event)
-    exists = Anchor.handle_click(x, y)
 
-    if exists:
+    h_exists = HandlerAnchor.handle_click(x, y)
+    if h_exists:
+        handler = HandlerAnchor.get_clicked_handler()
+        canvas.unbind("<B1-Motion>")
+        canvas.unbind("<ButtonRelease-1>")
+        canvas.bind("<B1-Motion>", lambda e: move_handler(handler, e))
+        return
+
+    anc_exists = Anchor.handle_click(x, y)
+
+    if anc_exists:
         anchor = Anchor.get_focused_anchor()
         anchor.highlight(True)
+        canvas.unbind("<B1-Motion>")
+        canvas.unbind("<ButtonRelease-1>")
         canvas.bind("<B1-Motion>", lambda e: move_anchor(anchor, e))
         canvas.bind("<ButtonRelease-1>", lambda e: _end_move(anchor, e))
         return
@@ -339,6 +358,11 @@ def move_anchor(anchor: Anchor, event):
 def _end_move(anchor, event):
     global canvas
     anchor.highlight(True)
+
+
+def move_handler(handler: HandlerAnchor, event):
+    x, y = _get_local_x_y(event)
+    handler.move(x, y)
 
 
 def _get_local_x_y(event) -> tuple[int, int]:
