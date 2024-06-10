@@ -1,5 +1,232 @@
 import turtle as t
-from Curve2D import *
+from typing import Optional, Final
+from time import time
+
+from clickableObject import ClickableObject
+from curve2D import *
+
+pen: Optional[t.Turtle] = None
+canvas: Optional[t.Canvas] = None
+clicked_time: float = 0
+
+
+class HandlerAnchor(ClickableObject):
+    # Constants
+    RADIUS: Final[int] = 3
+
+    # Private fields
+    _x: int = 0
+    _y: int = 0
+
+    def __init__(self, x: int, y: int):
+        self._x = x
+        self._y = y
+
+    def is_clicked(self, x: float, y: float) -> bool:
+        # Box collider
+        return x - HandlerAnchor.RADIUS < self._x < x + HandlerAnchor.RADIUS and \
+               y - HandlerAnchor.RADIUS < self._y < y + HandlerAnchor.RADIUS
+
+
+# noinspection PyProtectedMember
+class Anchor(ClickableObject):
+    # Constants
+    RADIUS: Final[int] = 5
+    HANDLER_RADIUS: Final[int] = 3
+
+    # Class fields
+    _anchors: list = []
+    _focused_anchor = None
+
+    # Private fields
+    _x: int = 0
+    _y: int = 0
+    _handler_l: list[int] = [0, 0]
+    _handler_r: list[int] = [0, 0]
+    _highlighted: bool = False
+    _handler_on: bool = False
+
+    def __init__(self, x: int, y: int):
+        global pen
+        # Initialize fields
+        self._x = x
+        self._y = y
+        self._handler_l = [-30, 0]
+        self._handler_r = [30, 0]
+        self._highlighted: bool = False
+        self._handler_on: bool = False
+
+        # Add to _anchors
+        Anchor._anchors.append(self)
+
+        self._draw()
+
+    @classmethod
+    def handle_click(cls, x: float, y: float) -> bool:
+        # Change focused anchor
+        # Return true if there is an anchor clicked
+        # false if not
+        if cls._focused_anchor is not None:
+            cls._focused_anchor.un_highlight()
+
+        for anchor in cls._anchors:
+            if anchor.is_clicked(x, y):
+                anchor.highlight(True)
+                return True
+        return False
+
+    @classmethod
+    def get_focused_anchor(cls):
+        return cls._focused_anchor
+
+    def is_clicked(self, x: float, y: float) -> bool:
+        # Box collider
+        return x - Anchor.RADIUS < self._x < x + Anchor.RADIUS and \
+               y - Anchor.RADIUS < self._y < y + Anchor.RADIUS
+
+    def highlight(self, show_handler: bool = False):
+        global pen
+        # If another anchor is focused, un-focus it.
+        if Anchor._focused_anchor is not None and Anchor._focused_anchor != self:
+            Anchor._focused_anchor.un_highlight()
+
+        if show_handler:
+            self._handler_on = True
+
+        # Focus self
+        Anchor._focused_anchor = self
+        self._highlighted = True
+
+        # Draw
+        self._draw()
+
+    def un_highlight(self):
+        global pen
+        # Check focused
+        if Anchor._focused_anchor == self:
+            Anchor._focused_anchor = None
+            self._handler_on = False
+        self._highlighted = False
+
+        # Draw
+        self._draw()
+
+    def move(self, x: int, y: int):
+        global pen
+        # Remove handler
+        self._un_draw()
+
+        # Update position
+        self._x, self._y = x, y
+
+        # Draw
+        self._draw()
+
+        pen.pu()
+
+    def _draw(self):
+        global pen
+        # Goto the anchor's position
+        pen.pu()
+        pen.goto(self._x, self._y)
+
+        if self._handler_on:
+            self._draw_handlers()
+        else:
+            self._remove_handlers()
+
+        if self._highlighted:
+            # Goto the anchor's position
+            pen.pu()
+            pen.goto(self._x, self._y)
+
+            # Draw anchor
+            pen.pd()
+            pen.dot(Anchor.RADIUS + 3, "#0000FF")
+            pen.dot(Anchor.RADIUS, "#FFFFFF")
+
+            pen.pu()
+            return
+
+        # Goto the anchor's position
+        pen.pu()
+        pen.goto(self._x, self._y)
+
+        # Draw anchor
+        pen.pd()
+        pen.dot(Anchor.RADIUS + 3, "#FFFFFF")
+        pen.dot(Anchor.RADIUS, "#000000")
+
+        pen.pu()
+
+    def _un_draw(self):
+        global pen
+        # Goto the anchor's position
+        pen.pu()
+        pen.goto(self._x, self._y)
+
+        self._remove_handlers()
+
+        pen.pu()
+        pen.goto(self._x, self._y)
+
+        pen.pd()
+        pen.dot(Anchor.RADIUS + 3, "#FFFFFF")
+
+        pen.pu()
+        return
+
+    def _draw_handlers(self):
+        global pen
+        self._handler_on = True
+
+        # Goto the anchor's position
+        pen.pu()
+        pen.goto(self._x, self._y)
+
+        # Draw handlers:
+        for handler in (self._handler_r, self._handler_l):
+            pen.pd()
+            pen.pencolor("#000000")
+            pen.goto(self._x + handler[0], self._y + handler[1])
+            pen.dot(Anchor.HANDLER_RADIUS + 3)
+            pen.dot(Anchor.HANDLER_RADIUS, "#FFFFFF")
+
+            pen.pu()
+            pen.goto(self._x, self._y)
+
+    def _remove_handlers(self):
+        global pen
+        self._handler_on = False
+
+        # Goto the anchor's position
+        pen.pu()
+        pen.goto(self._x, self._y)
+
+        # Draw handlers:
+        for handler in (self._handler_r, self._handler_l):
+            pen.pd()
+            pen.pencolor("#FFFFFF")
+            pen.goto(self._x + handler[0], self._y + handler[1])
+            pen.dot(Anchor.HANDLER_RADIUS + 3, "#FFFFFF")
+
+            pen.pu()
+            pen.goto(self._x, self._y)
+
+
+def setup():
+    global pen
+    t.tracer(0, 0)
+    t.ht()
+    setup_canvas_event_listeners()
+    pen = t.getturtle()
+    t.mainloop()
+
+
+def setup_canvas_event_listeners():
+    global canvas
+    canvas = t.getcanvas()
+    canvas.bind("<Button-1>", draw_anchor, True)
 
 
 def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int):
@@ -19,15 +246,37 @@ def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int
     t.pu()
 
 
+def draw_anchor(event):
+    global pen, canvas
+    x, y = _get_local_x_y(event)
+    exists = Anchor.handle_click(x, y)
+
+    if exists:
+        anchor = Anchor.get_focused_anchor()
+        anchor.highlight(True)
+        canvas.bind("<B1-Motion>", lambda e: move_anchor(anchor, e))
+        canvas.bind("<ButtonRelease-1>", lambda e: _end_move(anchor, e))
+        return
+
+    canvas.unbind("<B1-Motion>")
+    canvas.unbind("<ButtonRelease-1>")
+    Anchor(x, y)
+
+
+def move_anchor(anchor: Anchor, event):
+    x, y = _get_local_x_y(event)
+    anchor.move(x, y)
+
+
+def _end_move(anchor, event):
+    global canvas
+    anchor.highlight(True)
+
+
+def _get_local_x_y(event) -> tuple[int, int]:
+    global canvas
+    return canvas.canvasx(event.x), -canvas.canvasy(event.y)
+
+
 if __name__ == "__main__":
-    t.tracer(0, 0)
-    t.ht()
-    sample_curve = BezierCurve2D((-500, -300), (0, 300), (500, -300))
-    draw_curve(t.getturtle(), sample_curve, 1000)
-    t.goto((0, 300))
-    t.dot(10, "#ff0000")
-    t.goto((-500, -300))
-    t.dot(10, "#00ff00")
-    t.goto((500, -300))
-    t.dot(10, "#0000ff")
-    t.mainloop()
+    setup()
