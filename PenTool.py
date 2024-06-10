@@ -49,48 +49,46 @@ class HandlerAnchor(ClickableObject):
         return x - HandlerAnchor.RADIUS < global_x < x + HandlerAnchor.RADIUS and \
                y - HandlerAnchor.RADIUS < global_y < y + HandlerAnchor.RADIUS
 
-    @classmethod
-    def draw(cls, anc):
+    def draw(self):
         global pen
+        anc = self._anchor
         anc_x, anc_y = anc.get_pos()
+        global_x, global_y = self.get_pos()
 
         # Goto the focused anchor's position
         pen.pu()
         pen.goto(anc_x, anc_y)
 
-        for handler in (anc.get_handlers()):
-            h_x, h_y = handler.get_pos()
+        # Un-draw handler
+        pen.pd()
+        pen.goto(global_x, global_y)
+        pen.dot(HandlerAnchor.RADIUS + 1, "#000000")
+        pen.dot(HandlerAnchor.RADIUS, "#FFFFFF")
 
-            # Draw a handler
-            pen.pd()
-            pen.pencolor("#000000")
-            pen.goto(h_x, h_y)
-            pen.dot(HandlerAnchor.RADIUS + 1, "#000000")
-            pen.dot(HandlerAnchor.RADIUS, "#FFFFFF")
+        # Reset settings
+        pen.pu()
+        pen.goto(anc_x, anc_y)
+        pen.color("#000000")
 
-            pen.pu()
-            pen.goto(anc_x, anc_y)
-
-    @classmethod
-    def un_draw(cls, anc):
+    def un_draw(self):
         global pen
+        anc = self._anchor
         anc_x, anc_y = anc.get_pos()
+        global_x, global_y = self.get_pos()
 
         # Goto the focused anchor's position
         pen.pu()
         pen.goto(anc_x, anc_y)
 
-        for handler in anc.get_handlers():
-            h_x, h_y = handler.get_pos()
+        # Un-draw handler
+        pen.pd()
+        pen.pencolor("#FFFFFF")
+        pen.goto(global_x, global_y)
+        pen.dot(HandlerAnchor.RADIUS + 1, "#FFFFFF")
 
-            # Draw a handler
-            pen.pd()
-            pen.pencolor("#FFFFFF")
-            pen.goto(h_x, h_y)
-            pen.dot(HandlerAnchor.RADIUS + 1, "#FFFFFF")
-
-            pen.pu()
-            pen.goto(anc_x, anc_y)
+        # Reset settings
+        pen.pu()
+        pen.goto(anc_x, anc_y)
         pen.color("#000000")
 
     def get_local_pos(self) -> tuple[int, int]:
@@ -100,10 +98,18 @@ class HandlerAnchor(ClickableObject):
         x, y = self._anchor.get_pos()
         return x + self._x, y + self._y
 
-    @classmethod
-    def assign_focused_handlers(cls, handler_l, handler_r):
-        cls._focused_left_handler = handler_l
-        cls._focused_right_handler = handler_r
+    def move(self, x: int, y: int):
+        global pen
+        # Remove handler
+        self.un_draw()
+
+        # Update position
+        self._x, self._y = x, y
+
+        # Draw
+        self.draw()
+
+        pen.pu()
 
 
 # noinspection PyProtectedMember
@@ -265,14 +271,15 @@ class Anchor(ClickableObject):
         global pen
         self._handler_on = True
 
-        HandlerAnchor.assign_focused_handlers(self._handler_l, self._handler_r)
-        HandlerAnchor.draw(self)
+        for handler in (self._handler_l, self._handler_r):
+            handler.draw()
 
     def _remove_handlers(self):
         global pen
         self._handler_on = False
 
-        HandlerAnchor.un_draw(self)
+        for handler in (self._handler_l, self._handler_r):
+            handler.un_draw()
 
 
 def setup():
