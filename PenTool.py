@@ -21,11 +21,13 @@ class HandlerAnchor(ClickableObject):
     _x: int = 0
     _y: int = 0
     _anchor = None
+    is_highlighted: bool = False
 
     def __init__(self, x: int, y: int, anchor):
         self._x = x
         self._y = y
         self._anchor = anchor
+        self.is_highlighted = False
 
     @classmethod
     def handle_click(cls, x: float, y: float) -> bool:
@@ -34,13 +36,10 @@ class HandlerAnchor(ClickableObject):
         if anc is None:
             return False
 
-        h_l, h_r = anc.get_handlers()
-        if h_l.is_clicked(x, y):
-            cls._clicked_handler = h_l
-            return True
-        if h_r.is_clicked(x, y):
-            cls._clicked_handler = h_r
-            return True
+        for handler in anc.get_handlers():
+            if handler.is_clicked(x, y):
+                cls._clicked_handler = handler
+                return True
 
         return False
 
@@ -52,6 +51,8 @@ class HandlerAnchor(ClickableObject):
 
     def draw(self):
         global pen
+        self.is_highlighted = True
+
         anc = self._anchor
         anc_x, anc_y = anc.get_pos()
         global_x, global_y = self.get_pos()
@@ -73,6 +74,8 @@ class HandlerAnchor(ClickableObject):
 
     def un_draw(self):
         global pen
+        self.is_highlighted = False
+
         anc = self._anchor
         anc_x, anc_y = anc.get_pos()
         global_x, global_y = self.get_pos()
@@ -109,17 +112,13 @@ class HandlerAnchor(ClickableObject):
         # Update lines
         # noinspection PyProtectedMember
         for connected_anchor, connection in self._anchor._connected_anchors_and_lines.items():
-            anc_s_handler = self._anchor.get_handlers()
-            if anc_s_handler[0] == self:
-                anc_s_handler = ((x - anc_x, y - anc_y), anc_s_handler[1].get_local_pos())
-            else:
-                anc_s_handler = (anc_s_handler[0].get_local_pos(), (x - anc_x, y - anc_y))
+            if connection.handler_s == self:
+                connection.update_handler((x - anc_x, y - anc_y), connection.handler_e.get_local_pos())
+                continue
 
-            anc_e_handler = connected_anchor.get_handlers()
-            anc_e_handler = (anc_e_handler[0].get_local_pos(), anc_e_handler[1].get_local_pos())
-            connection.redraw_bezier_exp(
-                self._anchor.get_pos(), anc_s_handler, connected_anchor.get_pos(), anc_e_handler
-            )
+            if connection.handler_e == self:
+                connection.update_handler(connection.handler_s.get_local_pos(), (x - anc_x, y - anc_y))
+                continue
 
         # Update position
         self._x, self._y = x - anc_x, y - anc_y
@@ -127,7 +126,7 @@ class HandlerAnchor(ClickableObject):
         # Draw
         self.draw()
 
-        self._anchor.draw()
+        self._anchor._draw()
         pen.pu()
 
     @classmethod
@@ -152,8 +151,6 @@ class Anchor(ClickableObject):
     # Private fields
     _x: int = 0
     _y: int = 0
-    _handler_l: HandlerAnchor
-    _handler_r: HandlerAnchor
     _highlighted: bool = False
     _handler_on: bool = False
     _connected_anchors_and_lines: dict = {}
@@ -163,8 +160,6 @@ class Anchor(ClickableObject):
         # Initialize fields
         self._x = x
         self._y = y
-        self._handler_l = HandlerAnchor(-30, 0, self)
-        self._handler_r = HandlerAnchor(30, 0, self)
         self._highlighted: bool = True
         self._handler_on: bool = True
         self._connected_anchors_and_lines = dict()
@@ -173,7 +168,7 @@ class Anchor(ClickableObject):
         Anchor._anchors.append(self)
         Anchor._focused_anchor = self
 
-        self.draw()
+        self._draw()
 
     @classmethod
     def handle_click(cls, x: float, y: float) -> bool:
@@ -212,7 +207,7 @@ class Anchor(ClickableObject):
         self._highlighted = True
 
         # Draw
-        self.draw()
+        self._draw()
 
     def un_highlight(self):
         global pen
@@ -223,7 +218,7 @@ class Anchor(ClickableObject):
         self._highlighted = False
 
         # Draw
-        self.draw()
+        self._draw()
 
     def move(self, x: int, y: int):
         global pen
@@ -232,29 +227,23 @@ class Anchor(ClickableObject):
 
         # Update lines
         for connected_anchor, connection in self._connected_anchors_and_lines.items():
-            anc_s_handler = self.get_handlers()
-            anc_s_handler = (anc_s_handler[0].get_local_pos(), anc_s_handler[1].get_local_pos())
+            if connection.anc_s == self:
+                connection.update_anchor((x, y), connected_anchor.get_pos())
+                continue
 
-            anc_e_handler = connected_anchor.get_handlers()
-            anc_e_handler = (anc_e_handler[0].get_local_pos(), anc_e_handler[1].get_local_pos())
-            connection.redraw_bezier_exp((x, y), anc_s_handler, connected_anchor.get_pos(), anc_e_handler)
+            connection.update_anchor(connected_anchor.get_pos(), (x, y))
 
         # Update position
         self._x, self._y = x, y
 
         # Draw
-        self.draw()
+        self._draw()
 
         pen.pu()
 
     def connect(self, other_anchor):
         if other_anchor in self._connected_anchors_and_lines.keys():
             return
-
-        if len(self._connected_anchors_and_lines) == 0 and len(other_anchor._connected_anchors_and_lines) == 0:
-            # Set handlers to default
-            self._default_handler_for_connection(other_anchor)
-            other_anchor._default_handler_for_connection(self)
 
         # Add line
         line = Line(self, other_anchor)
@@ -264,10 +253,19 @@ class Anchor(ClickableObject):
     def get_pos(self) -> tuple[int, int]:
         return self._x, self._y
 
-    def get_handlers(self) -> tuple[HandlerAnchor, HandlerAnchor]:
-        return self._handler_l, self._handler_r
+    def get_handlers(self) -> list[HandlerAnchor]:
+        handlers = []
+        for line in self._connected_anchors_and_lines.values():
+            if line.anc_s == self:
+                handlers.append(line.handler_s)
+                continue
 
-    def draw(self):
+            if line.anc_e == self:
+                handlers.append(line.handler_e)
+                continue
+        return handlers
+
+    def _draw(self):
         global pen
         # Goto the anchor's position
         pen.pu()
@@ -276,7 +274,7 @@ class Anchor(ClickableObject):
         if self._handler_on:
             self._draw_handlers()
         else:
-            self._remove_handlers()
+            self._hide_handlers()
 
         if self._highlighted:
             # Goto the anchor's position
@@ -308,7 +306,7 @@ class Anchor(ClickableObject):
         pen.pu()
         pen.goto(self._x, self._y)
 
-        self._remove_handlers()
+        self._hide_handlers()
 
         pen.pu()
         pen.goto(self._x, self._y)
@@ -323,60 +321,37 @@ class Anchor(ClickableObject):
         global pen
         self._handler_on = True
 
-        for handler in (self._handler_l, self._handler_r):
+        for handler in self.get_handlers():
             handler.draw()
 
-    def _remove_handlers(self):
+    def _hide_handlers(self):
         global pen
         self._handler_on = False
 
-        for handler in (self._handler_l, self._handler_r):
+        for handler in self.get_handlers():
             handler.un_draw()
-
-    def _default_handler_for_connection(self, other_anchor):
-        # Compute tangent
-        other_pos = other_anchor.get_pos()
-        adj_x = self._x if self._x != other_pos[0] else self._x - 1e-2
-        tangent = (self._y - other_pos[1]) / (adj_x - other_pos[0])
-
-        # If handler is on, move the handler
-        if self._handler_on:
-            if _is_left(self, other_anchor):
-                x = 20
-                self._handler_r.move(self._x + x, self._y + tangent * x)
-                return
-
-            x = -20
-            self._handler_l.move(self._x + x, self._y + tangent * x)
-            return
-
-        # If handler is off, move (silently)
-        if _is_left(self, other_anchor):
-            x = 20
-            self._handler_r.set_default(self._x + x, self._y + tangent * x)
-            return
-
-        x = -20
-        self._handler_l.set_default(self._x + x, self._y + tangent * x)
 
 
 class Line:
     # Class fields
-    number_of_slices = 10
+    number_of_slices = 20
 
     # Private fields
     anc_s: Anchor
     anc_e: Anchor
     bezier_exp: BezierCurve2D
+    handler_s: HandlerAnchor
+    handler_e: HandlerAnchor
 
     def __init__(self, start_anchor: Anchor, end_anchor: Anchor):
         self.anc_s = start_anchor
         self.anc_e = end_anchor
 
+        self._default_handlers()
         self._make_bezier_exp()
-        self.draw()
+        self._draw()
 
-    def draw(self):
+    def _draw(self):
         global pen
         delta_t = 1 / Line.number_of_slices
 
@@ -392,6 +367,12 @@ class Line:
             pen.goto(coordinate_of_next_point[0], coordinate_of_next_point[1])
 
         t.pu()
+
+    def update_anchor(self, new_anc_s_pos: tuple[int, int], new_anc_e_pos: tuple[int, int]):
+        self._update(new_anc_s_pos, self.handler_s.get_local_pos(), new_anc_e_pos, self.handler_e.get_local_pos())
+
+    def update_handler(self, new_handler_s_pos: tuple[int, int], new_handler_e_pos: tuple[int, int]):
+        self._update(self.anc_s.get_pos(), new_handler_s_pos, self.anc_e.get_pos(), new_handler_e_pos)
 
     def _un_draw(self):
         global pen
@@ -411,45 +392,44 @@ class Line:
         t.pu()
 
     def _make_bezier_exp(self):
-        # Find if start anchor or end anchor is in left side
-        if _is_left(self.anc_s, self.anc_e):
-            left_anchor = self.anc_s
-            right_anchor = self.anc_e
-        else:
-            left_anchor = self.anc_e
-            right_anchor = self.anc_s
-
-        left_handlers = left_anchor.get_handlers()
-        left_handlers = (left_handlers[0].get_local_pos(), left_handlers[1].get_local_pos())
-
-        right_handlers = right_anchor.get_handlers()
-        right_handlers = (right_handlers[0].get_local_pos(), right_handlers[1].get_local_pos())
-
-        # Compute intersection of handlers
         intersection = _find_intersection_of_handlers(
-            left_anchor.get_pos(), left_handlers,
-            right_anchor.get_pos(), right_handlers
+            self.anc_s.get_pos(), self.handler_s.get_local_pos(),
+            self.anc_e.get_pos(), self.handler_e.get_local_pos()
         )
 
-        # Add bezier_expression
         self.bezier_exp = BezierCurve2D(self.anc_s.get_pos(), intersection, self.anc_e.get_pos())
 
-    def redraw_bezier_exp(
-            self, new_anc_s_pos: tuple[int, int], new_anc_s_handlers: tuple[tuple[int, int], tuple[int, int]],
-            new_anc_e_pos: tuple[int, int], new_anc_e_handlers: tuple[tuple[int, int], tuple[int, int]]
+    def _update(
+            self, new_anc_s_pos: tuple[int, int], new_handler_s_pos: tuple[int, int],
+            new_anc_e_pos: tuple[int, int], new_handler_e_pos: tuple[int, int]
     ):
-        is_left = new_anc_s_pos[0] <= new_anc_e_pos[0]
-        left_anchor = new_anc_s_pos if is_left else new_anc_e_pos
-        right_anchor = new_anc_e_pos if is_left else new_anc_s_pos
-
-        left_handlers = new_anc_s_handlers if is_left else new_anc_e_handlers
-        right_handlers = new_anc_e_handlers if is_left else new_anc_s_handlers
-
-        intersection = _find_intersection_of_handlers(left_anchor, left_handlers, right_anchor, right_handlers)
+        intersection = _find_intersection_of_handlers(
+            new_anc_s_pos, new_handler_s_pos, new_anc_e_pos, new_handler_e_pos
+        )
 
         self._un_draw()
-        self.bezier_exp = BezierCurve2D(left_anchor, intersection, right_anchor)
-        self.draw()
+        self.bezier_exp = BezierCurve2D(new_anc_s_pos, intersection, new_anc_e_pos)
+        self._draw()
+
+    # noinspection PyProtectedMember
+    def _default_handlers(self):
+        anc_l, anc_r = (self.anc_s, self.anc_e) if _is_left(self.anc_s, self.anc_e) else (self.anc_e, self.anc_s)
+        adj_l_x, l_y = anc_l.get_pos()
+        r_x, r_y = anc_r.get_pos()
+
+        # Find tangent
+        if adj_l_x == r_x:
+            adj_l_x -= 1e-2
+        tangent = (r_y - l_y) / (r_x - adj_l_x)
+
+        x = 10
+        if self.anc_s == anc_l:
+            self.handler_s = HandlerAnchor(x, int(tangent * x), anc_l)
+            self.handler_e = HandlerAnchor(-x, int(-tangent * x), anc_r)
+            return
+
+        self.handler_s = HandlerAnchor(-x, int(-tangent * x), anc_r)
+        self.handler_e = HandlerAnchor(x, int(tangent * x), anc_l)
 
 
 def _is_left(anchor_1: Anchor, anchor_2: Anchor) -> bool:
@@ -457,15 +437,17 @@ def _is_left(anchor_1: Anchor, anchor_2: Anchor) -> bool:
 
 
 def _find_intersection_of_handlers(
-    anc_l_pos: tuple[int, int], anc_l_handlers: tuple[tuple[int, int], tuple[int, int]],
-    anc_r_pos: tuple[int, int], anc_r_handlers: tuple[tuple[int, int], tuple[int, int]]
+    anc_s_pos: tuple[int, int], handler_s: tuple[int, int],
+    anc_e_pos: tuple[int, int], handler_e: tuple[int, int]
 ) -> tuple[float, float]:
-    left_anchor_right_handler = anc_l_handlers[1]
-    right_anchor_left_handler = anc_r_handlers[0]
+    is_left = anc_s_pos[0] <= anc_e_pos[0]
+    l_anc, r_anc, l_handler, r_handler = \
+        (anc_s_pos, anc_e_pos, handler_s, handler_e) if is_left else \
+        (anc_e_pos, anc_s_pos, handler_e, handler_s)
 
     # If handler's x is 0 ZeroDivisionException will occur
-    l_x_adj, l_y = left_anchor_right_handler
-    r_x_adj, r_y = right_anchor_left_handler
+    l_x_adj, l_y = l_handler
+    r_x_adj, r_y = r_handler
     if l_x_adj == 0:
         l_x_adj = 1e-3
 
@@ -475,8 +457,8 @@ def _find_intersection_of_handlers(
     l_tangent = l_y / l_x_adj
     r_tangent = r_y / r_x_adj
 
-    l_anc_x, l_anc_y = anc_l_pos
-    r_anc_x, r_anc_y = anc_r_pos
+    l_anc_x, l_anc_y = l_anc
+    r_anc_x, r_anc_y = r_anc
 
     # Avoid parallel
     l_tangent = l_tangent if l_tangent != r_tangent else l_tangent - 1e-1
@@ -556,6 +538,8 @@ def pen_tool_handler(event):
         # Line adding
         new_focus = Anchor.get_focused_anchor()
         prev_focus.connect(new_focus)
+        # noinspection PyProtectedMember
+        new_focus._draw()
         return
 
     canvas.unbind("<B1-Motion>")
