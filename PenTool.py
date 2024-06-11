@@ -106,6 +106,21 @@ class HandlerAnchor(ClickableObject):
         # Remove handler
         self.un_draw()
 
+        # Update lines
+        # noinspection PyProtectedMember
+        for connected_anchor, connection in self._anchor._connected_anchors_and_lines.items():
+            anc_s_handler = self._anchor.get_handlers()
+            if anc_s_handler[0] == self:
+                anc_s_handler = ((x - anc_x, y - anc_y), anc_s_handler[1].get_local_pos())
+            else:
+                anc_s_handler = (anc_s_handler[0].get_local_pos(), (x - anc_x, y - anc_y))
+
+            anc_e_handler = connected_anchor.get_handlers()
+            anc_e_handler = (anc_e_handler[0].get_local_pos(), anc_e_handler[1].get_local_pos())
+            connection.redraw_bezier_exp(
+                self._anchor.get_pos(), anc_s_handler, connected_anchor.get_pos(), anc_e_handler
+            )
+
         # Update position
         self._x, self._y = x - anc_x, y - anc_y
 
@@ -137,6 +152,7 @@ class Anchor(ClickableObject):
     _handler_r: HandlerAnchor
     _highlighted: bool = False
     _handler_on: bool = False
+    _connected_anchors_and_lines: dict = {}
 
     def __init__(self, x: int, y: int):
         global pen
@@ -147,6 +163,7 @@ class Anchor(ClickableObject):
         self._handler_r = HandlerAnchor(30, 0, self)
         self._highlighted: bool = True
         self._handler_on: bool = True
+        self._connected_anchors_and_lines = dict()
 
         # Add to _anchors
         Anchor._anchors.append(self)
@@ -209,6 +226,15 @@ class Anchor(ClickableObject):
         # Remove handler
         self._un_draw()
 
+        # Update lines
+        for connected_anchor, connection in self._connected_anchors_and_lines.items():
+            anc_s_handler = self.get_handlers()
+            anc_s_handler = (anc_s_handler[0].get_local_pos(), anc_s_handler[1].get_local_pos())
+
+            anc_e_handler = connected_anchor.get_handlers()
+            anc_e_handler = (anc_e_handler[0].get_local_pos(), anc_e_handler[1].get_local_pos())
+            connection.redraw_bezier_exp((x, y), anc_s_handler, connected_anchor.get_pos(), anc_e_handler)
+
         # Update position
         self._x, self._y = x, y
 
@@ -216,6 +242,11 @@ class Anchor(ClickableObject):
         self.draw()
 
         pen.pu()
+
+    def connect(self, other_anchor):
+        line = Line(self, other_anchor)
+        self._connected_anchors_and_lines[other_anchor] = line
+        other_anchor._connected_anchors_and_lines[self] = line
 
     def get_pos(self) -> tuple[int, int]:
         return self._x, self._y
@@ -290,6 +321,135 @@ class Anchor(ClickableObject):
             handler.un_draw()
 
 
+class Line:
+    # Class fields
+    number_of_slices = 200
+
+    # Private fields
+    anc_s: Anchor
+    anc_e: Anchor
+    bezier_exp: BezierCurve2D
+
+    def __init__(self, start_anchor: Anchor, end_anchor: Anchor):
+        self.anc_s = start_anchor
+        self.anc_e = end_anchor
+
+        self._make_bezier_exp()
+        self.draw()
+
+    def draw(self):
+        global pen
+        delta_t = 1 / Line.number_of_slices
+
+        # Prepare for drawing
+        pen.pu()
+        pen.goto(self.bezier_exp.get_point(0))
+
+        pen.pencolor("#000000")
+        pen.pd()
+
+        for i in range(1, Line.number_of_slices + 1):
+            coordinate_of_next_point = self.bezier_exp.get_point(delta_t * i)
+            pen.goto(coordinate_of_next_point[0], coordinate_of_next_point[1])
+
+        t.pu()
+
+    def _un_draw(self):
+        global pen
+        delta_t = 1 / Line.number_of_slices
+
+        # Prepare for drawing
+        pen.pu()
+        pen.goto(self.bezier_exp.get_point(0))
+
+        pen.pencolor("#FFFFFF")
+        pen.pd()
+
+        for i in range(1, Line.number_of_slices + 1):
+            coordinate_of_next_point = self.bezier_exp.get_point(delta_t * i)
+            pen.goto(coordinate_of_next_point[0], coordinate_of_next_point[1])
+
+        t.pu()
+
+    def _make_bezier_exp(self):
+        # Find if start anchor or end anchor is in left side
+        if _is_left(self.anc_s, self.anc_e):
+            left_anchor = self.anc_s
+            right_anchor = self.anc_e
+        else:
+            left_anchor = self.anc_e
+            right_anchor = self.anc_s
+
+        left_handlers = left_anchor.get_handlers()
+        left_handlers = (left_handlers[0].get_local_pos(), left_handlers[1].get_local_pos())
+
+        right_handlers = right_anchor.get_handlers()
+        right_handlers = (right_handlers[0].get_local_pos(), right_handlers[1].get_local_pos())
+
+        # Compute intersection of handlers
+        intersection = _find_intersection_of_handlers(
+            left_anchor.get_pos(), left_handlers,
+            right_anchor.get_pos(), right_handlers
+        )
+
+        # Add bezier_expression
+        self.bezier_exp = BezierCurve2D(self.anc_s.get_pos(), intersection, self.anc_e.get_pos())
+
+    def redraw_bezier_exp(
+            self, new_anc_s_pos: tuple[int, int], new_anc_s_handlers: tuple[tuple[int, int], tuple[int, int]],
+            new_anc_e_pos: tuple[int, int], new_anc_e_handlers: tuple[tuple[int, int], tuple[int, int]]
+    ):
+        is_left = new_anc_s_pos[0] <= new_anc_e_pos[0]
+        left_anchor = new_anc_s_pos if is_left else new_anc_e_pos
+        right_anchor = new_anc_e_pos if is_left else new_anc_s_pos
+
+        left_handlers = new_anc_s_handlers if is_left else new_anc_e_handlers
+        right_handlers = new_anc_e_handlers if is_left else new_anc_s_handlers
+
+        intersection = _find_intersection_of_handlers(left_anchor, left_handlers, right_anchor, right_handlers)
+
+        self._un_draw()
+        self.bezier_exp = BezierCurve2D(left_anchor, intersection, right_anchor)
+        self.draw()
+
+
+def _is_left(anchor_1: Anchor, anchor_2: Anchor) -> bool:
+    return anchor_1.get_pos()[0] <= anchor_2.get_pos()[0]
+
+
+def _find_intersection_of_handlers(
+    anc_l_pos: tuple[int, int], anc_l_handlers: tuple[tuple[int, int], tuple[int, int]],
+    anc_r_pos: tuple[int, int], anc_r_handlers: tuple[tuple[int, int], tuple[int, int]]
+) -> tuple[float, float]:
+    left_anchor_right_handler = anc_l_handlers[1]
+    right_anchor_left_handler = anc_r_handlers[0]
+
+    # If handler's x is 0 ZeroDivisionException will occur
+    l_x_adj, l_y = left_anchor_right_handler
+    r_x_adj, r_y = right_anchor_left_handler
+    if l_x_adj == 0:
+        l_x_adj = 1e-3
+
+    if r_x_adj == 0:
+        r_x_adj = 1e-3
+
+    l_tangent = l_y / l_x_adj
+    r_tangent = r_y / r_x_adj
+
+    l_anc_x, l_anc_y = anc_l_pos
+    r_anc_x, r_anc_y = anc_r_pos
+
+    # Avoid parallel
+    l_tangent = l_tangent if l_tangent != r_tangent else l_tangent - 1e-1
+
+    # Tangent value may be zero. Avoid ZeroDivisionException
+    tangent_diff_adj = l_tangent - r_tangent if l_tangent - r_tangent != 0 else 1e-3
+
+    intersect_x = (l_tangent * l_anc_x - r_tangent * r_anc_x + r_anc_y - l_anc_y) / tangent_diff_adj
+    intersect_y = l_tangent * (intersect_x - l_anc_x) + l_anc_y
+    return intersect_x, intersect_y
+
+
 def setup():
     global pen
     t.tracer(0, 0)
@@ -302,7 +462,9 @@ def setup():
 def setup_canvas_event_listeners():
     global canvas
     canvas = t.getcanvas()
-    canvas.bind("<Button-1>", main_click_handler, True)
+    canvas.bind("<KeyRelease>", change_mode)
+    t.getscreen().listen()
+    # canvas.bind("<Button-1>", direct_move_handler, True)
 
 
 def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int):
@@ -314,15 +476,55 @@ def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int
     pen.pd()
 
     for i in range(1, number_of_slices + 1):
-        print(delta_t * i)
         coordinate_of_next_point = curve.get_point(delta_t * i)
-        print(f"t: {delta_t * i} -> point: {coordinate_of_next_point}")
         pen.goto(coordinate_of_next_point[0], coordinate_of_next_point[1])
 
     t.pu()
 
 
-def main_click_handler(event):
+def change_mode(event):
+    key = event.char
+    if key == "p":
+        # Pen tool
+        canvas.unbind("<B1-Motion>")
+        canvas.unbind("<ButtonRelease-1>")
+        canvas.unbind("<Button-1>")
+        canvas.bind("<Button-1>", pen_tool_handler)
+        # canvas.bind("")
+        return
+
+    if key == "m":
+        # Direct move tool
+        canvas.unbind("<B1-Motion>")
+        canvas.unbind("<ButtonRelease-1>")
+        canvas.unbind("<Button-1>")
+        canvas.bind("<Button-1>", direct_move_handler)
+        return
+
+
+def pen_tool_handler(event):
+    global pen, canvas
+    x, y = _get_local_x_y(event)
+
+    prev_focus = Anchor.get_focused_anchor()
+
+    h_exists = HandlerAnchor.handle_click(x, y)
+    if h_exists:
+        return
+
+    anc_exists = Anchor.handle_click(x, y)
+    if anc_exists:
+        # Line adding
+        new_focus = Anchor.get_focused_anchor()
+        prev_focus.connect(new_focus)
+        return
+
+    canvas.unbind("<B1-Motion>")
+    canvas.unbind("<ButtonRelease-1>")
+    Anchor(x, y)
+
+
+def direct_move_handler(event):
     global pen, canvas
     x, y = _get_local_x_y(event)
 
@@ -335,7 +537,6 @@ def main_click_handler(event):
         return
 
     anc_exists = Anchor.handle_click(x, y)
-
     if anc_exists:
         anchor = Anchor.get_focused_anchor()
         anchor.highlight(True)
@@ -344,10 +545,6 @@ def main_click_handler(event):
         canvas.bind("<B1-Motion>", lambda e: move_anchor(anchor, e))
         canvas.bind("<ButtonRelease-1>", lambda e: _end_move(anchor, e))
         return
-
-    canvas.unbind("<B1-Motion>")
-    canvas.unbind("<ButtonRelease-1>")
-    Anchor(x, y)
 
 
 def move_anchor(anchor: Anchor, event):
