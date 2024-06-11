@@ -134,6 +134,10 @@ class HandlerAnchor(ClickableObject):
     def get_clicked_handler(cls):
         return cls._clicked_handler
 
+    def set_default(self, x: int, y: int):
+        self._x = x
+        self._x = y
+
 
 # noinspection PyProtectedMember
 class Anchor(ClickableObject):
@@ -244,6 +248,15 @@ class Anchor(ClickableObject):
         pen.pu()
 
     def connect(self, other_anchor):
+        if other_anchor in self._connected_anchors_and_lines.keys():
+            return
+
+        if len(self._connected_anchors_and_lines) == 0 and len(other_anchor._connected_anchors_and_lines) == 0:
+            # Set handlers to default
+            self._default_handler_for_connection(other_anchor)
+            other_anchor._default_handler_for_connection(self)
+
+        # Add line
         line = Line(self, other_anchor)
         self._connected_anchors_and_lines[other_anchor] = line
         other_anchor._connected_anchors_and_lines[self] = line
@@ -320,10 +333,36 @@ class Anchor(ClickableObject):
         for handler in (self._handler_l, self._handler_r):
             handler.un_draw()
 
+    def _default_handler_for_connection(self, other_anchor):
+        # Compute tangent
+        other_pos = other_anchor.get_pos()
+        adj_x = self._x if self._x != other_pos[0] else self._x - 1e-2
+        tangent = (self._y - other_pos[1]) / (adj_x - other_pos[0])
+
+        # If handler is on, move the handler
+        if self._handler_on:
+            if _is_left(self, other_anchor):
+                x = 20
+                self._handler_r.move(self._x + x, self._y + tangent * x)
+                return
+
+            x = -20
+            self._handler_l.move(self._x + x, self._y + tangent * x)
+            return
+
+        # If handler is off, move (silently)
+        if _is_left(self, other_anchor):
+            x = 20
+            self._handler_r.set_default(self._x + x, self._y + tangent * x)
+            return
+
+        x = -20
+        self._handler_l.set_default(self._x + x, self._y + tangent * x)
+
 
 class Line:
     # Class fields
-    number_of_slices = 200
+    number_of_slices = 10
 
     # Private fields
     anc_s: Anchor
