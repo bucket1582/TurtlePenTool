@@ -1,6 +1,5 @@
 import turtle as t
 from typing import Optional, Final
-from time import time
 
 from clickableObject import ClickableObject
 from curve2D import *
@@ -126,6 +125,7 @@ class HandlerAnchor(ClickableObject):
         # Draw
         self.draw()
 
+        # noinspection PyProtectedMember
         self._anchor._draw()
         pen.pu()
 
@@ -265,6 +265,13 @@ class Anchor(ClickableObject):
                 continue
         return handlers
 
+    @classmethod
+    def redraw_all_anchors(cls):
+        for anchor in cls._anchors:
+            anchor._draw()
+            for line in anchor._connected_anchors_and_lines.values():
+                line._draw()
+
     def _draw(self):
         global pen
         # Goto the anchor's position
@@ -392,6 +399,10 @@ class Line:
         t.pu()
 
     def _make_bezier_exp(self):
+        if _b_is_on_line_of_a(self.anc_s.get_pos(), self.handler_s.get_local_pos(), self.anc_e.get_pos()):
+            self.bezier_exp = BezierCurve2D(self.anc_s.get_pos(), self.anc_e.get_pos())
+            return
+
         intersection = _find_intersection_of_handlers(
             self.anc_s.get_pos(), self.handler_s.get_local_pos(),
             self.anc_e.get_pos(), self.handler_e.get_local_pos()
@@ -403,6 +414,12 @@ class Line:
             self, new_anc_s_pos: tuple[int, int], new_handler_s_pos: tuple[int, int],
             new_anc_e_pos: tuple[int, int], new_handler_e_pos: tuple[int, int]
     ):
+        if _b_is_on_line_of_a(new_anc_s_pos, new_handler_s_pos, new_anc_e_pos):
+            self._un_draw()
+            self.bezier_exp = BezierCurve2D(new_anc_s_pos, new_anc_e_pos)
+            self._draw()
+            return
+
         intersection = _find_intersection_of_handlers(
             new_anc_s_pos, new_handler_s_pos, new_anc_e_pos, new_handler_e_pos
         )
@@ -422,37 +439,64 @@ class Line:
             adj_l_x -= 1e-2
         tangent = (r_y - l_y) / (r_x - adj_l_x)
 
-        x = 10
+        x = 1
+        y = tangent * x
+
+        size_adj = pow(x ** 2 + y ** 2, 0.5)
+        x /= size_adj
+        y /= size_adj
+
+        x = int(x * 40)
+        y = int(y * 40)
+
         if self.anc_s == anc_l:
-            self.handler_s = HandlerAnchor(x, int(tangent * x), anc_l)
-            self.handler_e = HandlerAnchor(-x, int(-tangent * x), anc_r)
+            self.handler_s = HandlerAnchor(x, y, anc_l)
+            self.handler_e = HandlerAnchor(-x, -y, anc_r)
             return
 
-        self.handler_s = HandlerAnchor(-x, int(-tangent * x), anc_r)
-        self.handler_e = HandlerAnchor(x, int(tangent * x), anc_l)
+        self.handler_s = HandlerAnchor(-x, -y, anc_r)
+        self.handler_e = HandlerAnchor(x, y, anc_l)
 
 
 def _is_left(anchor_1: Anchor, anchor_2: Anchor) -> bool:
     return anchor_1.get_pos()[0] <= anchor_2.get_pos()[0]
 
 
+def _b_is_on_line_of_a(
+        position_a: tuple[int, int], difference_a: tuple[int, int],
+        position_b: tuple[int, int]
+):
+    # vertical
+    if difference_a[0] == 0 and abs(position_b[0] - position_a[0]) < 1:
+        return True
+
+    # Distance
+    a, b, c = difference_a[1], -difference_a[0], -difference_a[1] * position_a[0] + difference_a[0] * position_a[1]
+    distance_squared = (a * position_b[0] + b * position_b[1] + c) ** 2 / (a ** 2 + b ** 2)
+
+    if distance_squared < 1:
+        return True
+
+    return False
+
+
 def _find_intersection_of_handlers(
-    anc_s_pos: tuple[int, int], handler_s: tuple[int, int],
-    anc_e_pos: tuple[int, int], handler_e: tuple[int, int]
+        anc_s_pos: tuple[int, int], handler_s: tuple[int, int],
+        anc_e_pos: tuple[int, int], handler_e: tuple[int, int]
 ) -> tuple[float, float]:
     is_left = anc_s_pos[0] <= anc_e_pos[0]
     l_anc, r_anc, l_handler, r_handler = \
         (anc_s_pos, anc_e_pos, handler_s, handler_e) if is_left else \
-        (anc_e_pos, anc_s_pos, handler_e, handler_s)
+            (anc_e_pos, anc_s_pos, handler_e, handler_s)
 
     # If handler's x is 0 ZeroDivisionException will occur
     l_x_adj, l_y = l_handler
     r_x_adj, r_y = r_handler
     if l_x_adj == 0:
-        l_x_adj = 1e-3
+        l_x_adj = 1
 
     if r_x_adj == 0:
-        r_x_adj = 1e-3
+        r_x_adj = 1
 
     l_tangent = l_y / l_x_adj
     r_tangent = r_y / r_x_adj
@@ -461,10 +505,10 @@ def _find_intersection_of_handlers(
     r_anc_x, r_anc_y = r_anc
 
     # Avoid parallel
-    l_tangent = l_tangent if l_tangent != r_tangent else l_tangent - 1e-1
+    l_tangent = l_tangent if l_tangent != r_tangent else l_tangent - 0.1
 
     # Tangent value may be zero. Avoid ZeroDivisionException
-    tangent_diff_adj = l_tangent - r_tangent if l_tangent - r_tangent != 0 else 1e-3
+    tangent_diff_adj = l_tangent - r_tangent if l_tangent - r_tangent != 0 else 0.01
 
     intersect_x = (l_tangent * l_anc_x - r_tangent * r_anc_x + r_anc_y - l_anc_y) / tangent_diff_adj
     intersect_y = l_tangent * (intersect_x - l_anc_x) + l_anc_y
@@ -483,27 +527,12 @@ def setup():
 def setup_canvas_event_listeners():
     global canvas
     canvas = t.getcanvas()
-    canvas.bind("<KeyRelease>", change_mode)
+    canvas.bind("<KeyRelease>", handle_key_input)
     t.getscreen().listen()
     # canvas.bind("<Button-1>", direct_move_handler, True)
 
 
-def draw_curve(pen: t.Turtle, curve: ParameterizedCurve2D, number_of_slices: int):
-    delta_t = 1 / number_of_slices
-
-    # Prepare for drawing
-    pen.pu()
-    pen.goto(curve.get_point(0))
-    pen.pd()
-
-    for i in range(1, number_of_slices + 1):
-        coordinate_of_next_point = curve.get_point(delta_t * i)
-        pen.goto(coordinate_of_next_point[0], coordinate_of_next_point[1])
-
-    t.pu()
-
-
-def change_mode(event):
+def handle_key_input(event):
     key = event.char
     if key == "p":
         # Pen tool
@@ -522,6 +551,9 @@ def change_mode(event):
         canvas.bind("<Button-1>", direct_move_handler)
         return
 
+    if key == "r":
+        refresh_paintings()
+
 
 def pen_tool_handler(event):
     global pen, canvas
@@ -537,14 +569,20 @@ def pen_tool_handler(event):
     if anc_exists:
         # Line adding
         new_focus = Anchor.get_focused_anchor()
-        prev_focus.connect(new_focus)
+        if prev_focus is not None:
+            prev_focus.connect(new_focus)
         # noinspection PyProtectedMember
         new_focus._draw()
         return
 
     canvas.unbind("<B1-Motion>")
     canvas.unbind("<ButtonRelease-1>")
-    Anchor(x, y)
+
+    new_focus = Anchor(x, y)
+    if prev_focus is not None:
+        prev_focus.connect(new_focus)
+    # noinspection PyProtectedMember
+    new_focus._draw()
 
 
 def direct_move_handler(event):
@@ -569,12 +607,19 @@ def direct_move_handler(event):
         canvas.bind("<ButtonRelease-1>", lambda e: _end_move(anchor, e))
         return
 
+    canvas.unbind("<B1-Motion>")
+    canvas.unbind("<ButtonRelease-1>")
+    focused = Anchor.get_focused_anchor()
+    if focused is not None:
+        focused.un_highlight()
+
 
 def move_anchor(anchor: Anchor, event):
     x, y = _get_local_x_y(event)
     anchor.move(x, y)
 
 
+# noinspection PyUnusedLocal
 def _end_move(anchor, event):
     global canvas
     anchor.highlight(True)
@@ -588,6 +633,10 @@ def move_handler(handler: HandlerAnchor, event):
 def _get_local_x_y(event) -> tuple[int, int]:
     global canvas
     return canvas.canvasx(event.x), -canvas.canvasy(event.y)
+
+
+def refresh_paintings():
+    Anchor.redraw_all_anchors()
 
 
 if __name__ == "__main__":
